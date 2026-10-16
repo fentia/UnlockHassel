@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="module_name">UnlockHassel</string>
+    <string name="module_description">解锁 ColorOS 相机哈苏水印样式与相册哈苏水印支持</string>
+</resources>

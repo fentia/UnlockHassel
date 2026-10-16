@@ -1,0 +1,51 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'io.github.fentia.unlockhassel'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'io.github.fentia.unlockhassel'
+        minSdk 31
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    compileOnly 'io.github.libxposed:api:102.0.0'
+    implementation 'org.luckypray:dexkit:2.3.0'
+    // DexKit 公开 API 引用 Kotlin 类型，需显式声明以参与编译期重载解析
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.5.0'
+}
