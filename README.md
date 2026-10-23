@@ -1,40 +1,35 @@
 # UnlockHassel
 
-UnlockHassel 是一个基于 **libxposed API 102** 的 ColorOS 哈苏水印解锁模块，用于在相机中启用哈苏水印样式、在相册中启用哈苏水印支持。模块没有独立用户界面，启用后常驻生效。
+UnlockHassel 是一个基于 **libxposed API 102** 的 ColorOS 相册哈苏水印解锁模块，用于在系统相册中启用哈苏水印，并解除照片来源限制。模块没有独立用户界面，启用后常驻生效。
+
+模块的适配对象是 ColorOS 17 的系统相册，在 `com.coloros.gallery3d` 17.10.41（versionCode 17010041）上完成验证。相册的类名、方法签名与配置节点名在不同版本间可能变化，换到其他版本时功能是否生效取决于兜底定位能否命中。
 
 ## 功能
 
-| 功能           | 作用位置 | 处理方式                                                 |
-|----------------|----------|----------------------------------------------------------|
-| 启用哈苏水印样式 | 相机     | 向 vendor tag 查询注入哈苏水印相关取值，并关闭画框水印   |
-| 启用哈苏水印     | 相册     | 放行哈苏水印配置节点，并将水印设备标记为哈苏机型         |
+| 功能             | 处理方式                                                             |
+|------------------|----------------------------------------------------------------------|
+| 启用哈苏水印     | 放行相册的哈苏水印配置节点，并将水印设备标记为哈苏机型               |
+| 解除照片来源限制 | 放行照片的哈苏设备判定，非哈苏联名设备拍摄的照片同样可使用哈苏水印   |
+| 热重载           | 修改模块后无需重启相册，在框架中触发重载即可重新挂载                 |
 
-注入的 vendor tag 如下：
-
-| vendor tag                                          | 取值 |
-|-----------------------------------------------------|------|
-| `com.oplus.camera.support.frame.watermark`          | 0    |
-| `com.oplus.hasselblad.watermark.support.default`    | 1    |
-| `com.oplus.camera.support.custom.hasselblad.watermark` | 1 |
-| `com.oplus.hasselblad.watermark.guide.support`      | 1    |
-| `com.oplus.use.hasselblad.style.support`            | 1    |
+相机侧无需处理，ColorOS 相机的哈苏水印样式由系统原生提供。模块只负责解除相册侧的判定限制，水印样式与排版仍由相册自身渲染。
 
 ## 兼容性与安装
 
-| 项目        | 要求                                                     |
-|-------------|----------------------------------------------------------|
-| Android     | Android 12 及以上（`minSdk 31`）                         |
-| 架构        | arm64-v8a                                                |
-| Xposed 框架 | 支持 libxposed API 101 及以上的框架                      |
-| 目标应用    | 相机 `com.oplus.camera`、`com.oneplus.camera`；相册 `com.coloros.gallery3d` |
+| 项目        | 要求                                              |
+|-------------|---------------------------------------------------|
+| Android     | Android 12 及以上（`minSdk 31`）                  |
+| 架构        | arm64-v8a                                         |
+| Xposed 框架 | 支持 libxposed API 102 及以上的框架               |
+| 目标应用    | 相册 `com.coloros.gallery3d`                      |
+| 已验证系统  | ColorOS 17（Android 17）                          |
+| 已验证相册  | `com.coloros.gallery3d` 17.10.41（versionCode 17010041） |
 
 安装步骤：
 
 1. 安装 APK。
-2. 在兼容的 Xposed 框架中启用模块，并将相机与相册加入作用域。
-3. 重启相机与相册。
-
-模块声明了静态作用域，作用域已随模块写入，通常无需手动勾选。相机侧的 vendor tag 注入需要 Android 13 及以上；相册侧依赖模块内置的 DexKit 原生库。
+2. 在兼容的 Xposed 框架中启用模块。
+3. 重启相册。
 
 ## 构建
 
@@ -62,25 +57,24 @@ app/build/outputs/apk/release/app-release.apk
 
 ## 实现说明
 
-| 功能             | Hook 点                                                                                              | 处理逻辑                                                                                     |
-|------------------|------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------|
-| 相机 vendor tag  | `com.oplus.ocs.camera.appinterface.adapter.CameraAdapterUtils#getVendorTagConfig`、`com.oplus.ocs.camera.consumer.apsAdapter.adapter.ApsUtils#getVendorTagConfig` | 在原方法返回后，按入参 tag 名替换返回值                                                       |
-| 相册配置节点     | 含 `configNode` 字符串的配置读取类，其 `(任意, boolean) -> boolean` 方法                              | 原方法未返回 true 时，对 `feature_is_support_hassel_watermark` 返回 true；ColorOS 14 之前同时放行 `feature_is_support_watermark` |
-| 相册水印设备     | 含 `WatermarkDevice`、`isHasselDevice` 字符串的水印设备类                                             | 在构造方法执行后，将哈苏标记字段置为 true                                                     |
+| 判定环节 | Hook 点                                                                                                        | 处理逻辑                                                     |
+|----------|----------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------|
+| 配置开关 | `com.oplus.gallery.framework.abilities.config.storage.OtherSystemStorage` 的 `(节点对象, boolean) -> Boolean` 方法 | 节点名含 `feature_is_support_hassel_watermark` 时返回 true   |
+| 机型判定 | `com.oplus.tbluniformeditor.plugins.watermark.data.WatermarkDevice`                                            | 构造完成后将哈苏标记字段置为 true，哈苏 getter 直接返回 true |
+| 照片来源 | `com.oplus.aiunit.vision.mnd0#g`                                                                                | 直接返回 true                                                |
 
-相册侧的两个类名在目标应用中无法直接引用，模块使用 **DexKit 2.3.0** 在运行时按字符串特征定位类，再用反射按类型取成员。该过程在应用启动时执行一次。
-
-ColorOS 版本号通过反射 `com.oplus.os.OplusBuild#getOplusOSVERSION` 读取，用于判断是否需要在放行哈苏水印的同时放行通用水印支持。
+相册的三个类无法在编译期直接引用，模块在运行时通过反射按类型取成员。定位方式为硬编码类名优先：命中目标类时直接挂载，不触发扫描；类名不存在时，才用 **DexKit 2.3.0** 按结构特征搜索候选类。DexKit 实例在首次需要时才创建，热重载前会显式关闭。
 
 ## 已知限制
 
-- 仅适用于 ColorOS 相机与相册，不适用于第三方相机与相册应用。
-- 依赖 ColorOS 私有类与 vendor tag；应用或系统更新后，类名、方法签名与 tag 名称可能变化，需要重新适配。
-- 相册侧按字符串特征定位类，定位失败时功能不生效，并在日志中留下 `UnlockHassel` 标签的错误记录。
-- 仅提供 arm64-v8a 原生库，32 位设备上相册侧功能不可用。
+- 适配与验证基于 ColorOS 17 的相册 17.10.41，其他版本未经测试；类名或方法签名变化后，能否生效取决于兜底定位是否命中。
+- 仅适用于 ColorOS 系统相册，不适用于第三方相册应用。
+- 依赖 ColorOS 私有类；系统相册更新后类名或方法签名可能变化，需要重新适配。
+- 照片来源判定所依赖的类名为混淆名，系统更新后失效的可能性高于其余两处，且没有兜底定位。
+- 仅提供 arm64-v8a 原生库，32 位设备上兜底定位不可用，硬编码路径不受影响。
 - 不适用于仅支持 legacy API 82 的旧框架。
 
-功能未生效时，请检查模块是否启用、相机与相册是否加入作用域、对应应用是否已重启。
+功能未生效时，请检查模块是否启用、相册是否已重启。
 
 ## 许可证与免责声明
 
