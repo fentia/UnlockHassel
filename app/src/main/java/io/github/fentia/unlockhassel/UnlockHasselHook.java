@@ -33,7 +33,14 @@ public class UnlockHasselHook extends XposedModule {
     private static final String CLASS_WATERMARK_DEVICE =
             "com.oplus.tbluniformeditor.plugins.watermark.data.WatermarkDevice";
     // 照片水印信息类，g() 判定照片是否来自哈苏设备
-    private static final String CLASS_WATERMARK_PHOTO = "com.oplus.aiunit.vision.mnd0";
+    // 17.10.41 为 mnd0；17.24.62 起混淆名重排为 x7g0
+    private static final String[] CLASSES_WATERMARK_PHOTO = {
+            "com.oplus.aiunit.vision.x7g0",
+            "com.oplus.aiunit.vision.mnd0",
+    };
+    // 照片水印设备类（Kotlin 版 WatermarkDevice），构造后需将哈苏标记字段置为 true
+    private static final String CLASS_WATERMARK_DEVICE_KT =
+            "com.oplus.aiunit.vision.q3g0";
 
     private static final String NODE_HASSEL_WATERMARK = "feature_is_support_hassel_watermark";
     private static final String NODE_WATERMARK = "feature_is_support_watermark";
@@ -82,6 +89,7 @@ public class UnlockHasselHook extends XposedModule {
     private void install(ClassLoader classLoader) {
         hookConfigNode(classLoader);
         hookWatermarkDevice(classLoader);
+        hookWatermarkDeviceKt(classLoader);
         hookWatermarkPhoto(classLoader);
     }
 
@@ -138,7 +146,7 @@ public class UnlockHasselHook extends XposedModule {
         }
         int hooked = 0;
         for (Class<?> clazz : candidates) {
-            Field field = findHasselField(clazz);
+            Field field = findHasselField(clazz, null);
             if (field != null) {
                 for (Constructor<?> constructor : clazz.getDeclaredConstructors()) {
                     try {
@@ -171,24 +179,59 @@ public class UnlockHasselHook extends XposedModule {
 
     // 放行照片的哈苏设备判定，解除"仅支持哈苏联名设备拍摄的照片"限制
     private void hookWatermarkPhoto(ClassLoader classLoader) {
-        Class<?> clazz = loadClass(CLASS_WATERMARK_PHOTO, classLoader);
-        if (clazz == null) {
-            log(Log.ERROR, TAG, "watermark photo class not found");
-            return;
-        }
         int hooked = 0;
-        for (Method method : clazz.getDeclaredMethods()) {
-            if (method.getParameterCount() != 0) continue;
-            if (method.getReturnType() != boolean.class) continue;
-            if (!"g".equals(method.getName())) continue;
-            try {
-                hook(method).intercept(chain -> true);
-                hooked++;
-            } catch (Throwable t) {
-                log(Log.ERROR, TAG, "watermark photo hook failed", t);
+        for (String className : CLASSES_WATERMARK_PHOTO) {
+            Class<?> clazz = loadClass(className, classLoader);
+            if (clazz == null) continue;
+            for (Method method : clazz.getDeclaredMethods()) {
+                if (method.getParameterCount() != 0) continue;
+                if (method.getReturnType() != boolean.class) continue;
+                if (!"g".equals(method.getName())) continue;
+                try {
+                    hook(method).intercept(chain -> true);
+                    hooked++;
+                } catch (Throwable t) {
+                    log(Log.ERROR, TAG, "watermark photo hook failed: " + className, t);
+                }
             }
         }
         log(Log.INFO, TAG, "watermark photo hooks: " + hooked);
+    }
+
+    // 拦截 Kotlin 版水印设备类的构造，将哈苏标记字段置为真
+    // 该字段是照片哈苏判定的数据源：水印入口、g() 判定与插件参数均读取它
+    private void hookWatermarkDeviceKt(ClassLoader classLoader) {
+        List<Class<?>> candidates = new ArrayList<>();
+        Class<?> exact = loadClass(CLASS_WATERMARK_DEVICE_KT, classLoader);
+        if (exact != null) {
+            candidates.add(exact);
+        } else {
+            candidates.addAll(findWatermarkDeviceKtCandidates(classLoader));
+        }
+        if (candidates.isEmpty()) {
+            log(Log.ERROR, TAG, "watermark device kt class not found");
+            return;
+        }
+        int hooked = 0;
+        for (Class<?> clazz : candidates) {
+            if (CLASS_WATERMARK_DEVICE.equals(clazz.getName())) continue; // Java 版已单独处理
+            Field field = findHasselField(clazz, "a");
+            if (field == null) continue;
+            for (Constructor<?> constructor : clazz.getDeclaredConstructors()) {
+                try {
+                    hook(constructor).intercept(chain -> {
+                        Object result = chain.proceed();
+                        Object instance = chain.getThisObject();
+                        if (instance != null) field.set(instance, true);
+                        return result;
+                    });
+                    hooked++;
+                } catch (Throwable t) {
+                    log(Log.ERROR, TAG, "watermark device kt ctor hook failed", t);
+                }
+            }
+        }
+        log(Log.INFO, TAG, "watermark device kt hooks: " + hooked);
     }
 
     // 按结构特征兜底定位配置节点类
@@ -234,6 +277,28 @@ public class UnlockHasselHook extends XposedModule {
         return result;
     }
 
+    // 按结构特征兜底定位 Kotlin 版水印设备类
+    private List<Class<?>> findWatermarkDeviceKtCandidates(ClassLoader classLoader) {
+        List<Class<?>> result = new ArrayList<>();
+        DexKitBridge bridge = dexKit();
+        if (bridge == null) return result;
+        try {
+            ClassMatcher matcher = new ClassMatcher()
+                    .addFieldForType(boolean.class)
+                    .addFieldForType(String.class)
+                    .addFieldForType(int.class)
+                    .usingStrings("WatermarkDevice(isHasselDevice=");
+            ClassDataList list = bridge.findClass(FindClass.create().matcher(matcher));
+            for (ClassData data : list) {
+                Class<?> clazz = loadClass(data.getName(), classLoader);
+                if (clazz != null) result.add(clazz);
+            }
+        } catch (Throwable t) {
+            log(Log.ERROR, TAG, "watermark device kt dexkit search failed", t);
+        }
+        return result;
+    }
+
     private DexKitBridge dexKit() {
         if (dexKitBridge != null) return dexKitBridge;
         if (apkPath == null) return null;
@@ -263,8 +328,10 @@ public class UnlockHasselHook extends XposedModule {
         }
     }
 
-    // 优先取名称含 hassel 的布尔字段，否则取首个布尔字段
-    private static Field findHasselField(Class<?> clazz) {
+    // 优先取名称含 hassel 的布尔字段，其次取指定名称的字段，否则取首个布尔字段
+    private static Field findHasselField(Class<?> clazz, String preferredName) {
+        Field hassel = null;
+        Field preferred = null;
         Field fallback = null;
         for (Class<?> current = clazz;
              current != null && current != Object.class;
@@ -272,14 +339,15 @@ public class UnlockHasselHook extends XposedModule {
             for (Field field : current.getDeclaredFields()) {
                 if (field.getType() != boolean.class) continue;
                 if (fallback == null) fallback = field;
-                if (field.getName().toLowerCase().contains("hassel")) {
-                    field.setAccessible(true);
-                    return field;
+                if (hassel == null && field.getName().toLowerCase().contains("hassel")) hassel = field;
+                if (preferred == null && preferredName != null && field.getName().equals(preferredName)) {
+                    preferred = field;
                 }
             }
         }
-        if (fallback != null) fallback.setAccessible(true);
-        return fallback;
+        Field field = hassel != null ? hassel : (preferred != null ? preferred : fallback);
+        if (field != null) field.setAccessible(true);
+        return field;
     }
 
     // 判断是否为 ColorOS 14 之前的版本，读取失败时按非旧版本处理

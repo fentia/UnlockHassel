@@ -2,7 +2,7 @@
 
 UnlockHassel 是一个基于 **libxposed API 102** 的 ColorOS 相册哈苏水印解锁模块，用于在系统相册中启用哈苏水印，并解除照片来源限制。模块没有独立用户界面，启用后常驻生效。
 
-模块的适配对象是 ColorOS 17 的系统相册，在 `com.coloros.gallery3d` 17.10.41（versionCode 17010041）上完成验证。相册的类名、方法签名与配置节点名在不同版本间可能变化，换到其他版本时功能是否生效取决于兜底定位能否命中。
+模块的适配对象是 ColorOS 17 的系统相册，在 `com.coloros.gallery3d` 17.24.62（versionCode 17024062）上完成验证；17.10.41（1.3 及更早版本）同样适配。相册的类名、方法签名与配置节点名在不同版本间可能变化，换到其他版本时功能是否生效取决于兜底定位能否命中。
 
 ## 功能
 
@@ -23,7 +23,7 @@ UnlockHassel 是一个基于 **libxposed API 102** 的 ColorOS 相册哈苏水�
 | Xposed 框架 | 支持 libxposed API 102 及以上的框架               |
 | 目标应用    | 相册 `com.coloros.gallery3d`                      |
 | 已验证系统  | ColorOS 17（Android 17）                          |
-| 已验证相册  | `com.coloros.gallery3d` 17.10.41（versionCode 17010041） |
+| 已验证相册  | `com.coloros.gallery3d` 17.24.62（versionCode 17024062） |
 
 安装步骤：
 
@@ -52,8 +52,10 @@ UnlockHassel 是一个基于 **libxposed API 102** 的 ColorOS 相册哈苏水�
 app/build/outputs/apk/release/app-release.apk
 ```
 
+也可以直接用 GitHub Actions 构建：推送到 `main` 自动触发 [Build APK](../../actions) 工作流，APK 以 Artifact 形式上传；推送 `v*` 标签会额外创建 Release。
+
 仓库使用 debug 签名配置，构建产物可直接安装使用。如需以自己的密钥签名，请在
-`app/build.gradle` 中配置 `signingConfigs`。
+`app/build.gradle` 中配置 `signingConfigs`。注意 CI 环境生成的 debug 密钥与本机不同，从本机构建切换为 CI 构建安装时，需先卸载旧版模块（在框架中重新启用即可）。
 
 ## 实现说明
 
@@ -61,16 +63,17 @@ app/build/outputs/apk/release/app-release.apk
 |----------|----------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------|
 | 配置开关 | `com.oplus.gallery.framework.abilities.config.storage.OtherSystemStorage` 的 `(节点对象, boolean) -> Boolean` 方法 | 节点名含 `feature_is_support_hassel_watermark` 时返回 true   |
 | 机型判定 | `com.oplus.tbluniformeditor.plugins.watermark.data.WatermarkDevice`                                            | 构造完成后将哈苏标记字段置为 true，哈苏 getter 直接返回 true |
-| 照片来源 | `com.oplus.aiunit.vision.mnd0#g`                                                                                | 直接返回 true                                                |
+| 照片设备 | `com.oplus.aiunit.vision.q3g0`（照片侧 Kotlin 版 `WatermarkDevice`）                                            | 构造完成后将哈苏标记字段置为 true，是照片判定的数据源         |
+| 照片来源 | `com.oplus.aiunit.vision.x7g0#g`（17.10.41 为 `mnd0#g`）                                                        | 直接返回 true                                                |
 
-相册的三个类无法在编译期直接引用，模块在运行时通过反射按类型取成员。定位方式为硬编码类名优先：命中目标类时直接挂载，不触发扫描；类名不存在时，才用 **DexKit 2.3.0** 按结构特征搜索候选类。DexKit 实例在首次需要时才创建，热重载前会显式关闭。
+相册的相关类无法在编译期直接引用，模块在运行时通过反射按类型取成员。定位方式为硬编码类名优先：命中目标类时直接挂载，不触发扫描；类名不存在时，才用 **DexKit 2.3.0** 按结构特征搜索候选类（配置节点类按方法签名结构，两个设备类分别按字符串 `isHasselDevice` 与 `WatermarkDevice(isHasselDevice=`）。DexKit 实例在首次需要时才创建，热重载前会显式关闭。
 
 ## 已知限制
 
 - 适配与验证基于 ColorOS 17 的相册 17.10.41，其他版本未经测试；类名或方法签名变化后，能否生效取决于兜底定位是否命中。
 - 仅适用于 ColorOS 系统相册，不适用于第三方相册应用。
 - 依赖 ColorOS 私有类；系统相册更新后类名或方法签名可能变化，需要重新适配。
-- 照片来源判定所依赖的类名为混淆名，系统更新后失效的可能性高于其余两处，且没有兜底定位。
+- 照片来源判定所依赖的类名为混淆名（`x7g0`、`q3g0`），系统更新后失效的可能性高于其余两处；`q3g0` 可由 DexKit 兜底定位，`x7g0#g` 没有兜底。
 - 仅提供 arm64-v8a 原生库，32 位设备上兜底定位不可用，硬编码路径不受影响。
 - 不适用于仅支持 legacy API 82 的旧框架。
 
